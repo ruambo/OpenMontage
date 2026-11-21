@@ -7,11 +7,12 @@ ok=0; bad=0
 chk(){ if eval "$2" >/dev/null 2>&1; then echo "  ✓ $1"; ok=$((ok+1)); else echo "  ❌ $1"; bad=$((bad+1)); fi; }
 chk "lane1 :8188 双卡可见(V100+PG500)" "curl -s -m3 http://127.0.0.1:8188/system_stats | grep -q PG500"
 chk "lane2 :8190 在岗" "curl -s -m3 http://127.0.0.1:8190/system_stats | grep -q devices"
-chk "lane1 生产值=fp16" "grep -q 'export H3_DIT_DTYPE=fp16' $H3/start_comfy_cuda.sh"
+chk "lane1 生产值=bf16(CEIL8人眼终审)" "grep -q ':-${H3_DIT_DTYPE:-bf16}' $H3/start_comfy_cuda.sh"
 chk "lane1 TE→cpu(铁律4: 32B TE必须CPU)" "grep -q 'H3_TE_DEVICE:-cpu' $H3/start_comfy_cuda.sh"
 chk "lane1 --cuda-device all(不钉卡)" "grep -q -- '--cuda-device all' $H3/start_comfy_cuda.sh"
 chk "lane1 脚本钉真UUID双卡对(CEIL7)" "grep -q $V100_UUID $H3/start_comfy_cuda.sh && grep -q $PG_UUID $H3/start_comfy_cuda.sh"
 chk "lane2 脚本锁 PG500 真UUID单卡(CEIL7)" "grep -q $PG_UUID $H3/start_comfy_pg.sh"
+chk "lane2 DiT=bf16(CEIL9)" "grep -q ^export.H3_DIT_DTYPE=bf16 $H3/start_comfy_pg.sh"
 chk "lane2 端口 8190" "grep -q -- '--port 8190' $H3/start_comfy_pg.sh"
 chk "stop 脚本连 lane2 一起收(CEIL7)" "grep -q '8190' $H3/stop_comfy_cuda.sh"
 chk "daemon 有车道过滤" "grep -q '_lane_match' $H3/h3_queue_daemon.py"

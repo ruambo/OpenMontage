@@ -48,7 +48,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #   ② 该 checkpoint 的 DiT 激活量级达 3e5，fp16 装不下 → 计算 dtype 必须用 bf16
 #      （H3_TEXTFP32 / H3_DIT_DTYPE 由该 custom node 读取）
 export H3_TEXTFP32=1
-export H3_DIT_DTYPE=fp16   # [CEIL5] 生产值改 fp16：480×832×111f 实测 921s→230s（4.0×）；
+export H3_DIT_DTYPE=bf16   # [CEIL9 试验] fp16草稿带马赛克(CEIL8人眼撤回)，V100实测bf16 DiT 23.5G，PG500 32G能否吃下待本试验；若OOM退回fp16并在描述标注草稿花屏；
 #   TextFP32 节点 ×1/8+clamp 兜住 3e5 激活不 NaN（2026-11-21 实测同 seed 无黑屏）。同 seed 输出风格会变，
 #   QC 对比视频见 141:~/projects/OpenMontage/projects/rev2_speed_test/qc/。回退：改回 bf16 并重启 h3-comfyui
 # 残差流缩放补丁已证伪（MLP/attention 输入过 RMSNorm 尺度不变，溢出不随流缩放消失）→ 显式关闭
