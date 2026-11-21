@@ -1,0 +1,13 @@
+[Unit]
+Description=OM101 rev2 ComfyUI resident supervisor (video-as-normale on V100)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /home/ruanlinbo/harness/h3/comfyui_resident.sh
+Restart=always
+RestartSec=15
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target
