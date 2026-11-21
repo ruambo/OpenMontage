@@ -1,0 +1,16 @@
+# [CEIL5] lane2 队列守护：只吃 lane==fast 任务 → PG500 :8190，强制 te=small
+[Unit]
+Description=OM101 lane2 (PG500 fast lane) queue daemon
+
+[Service]
+ExecStart=/usr/bin/python3 /home/ruanlinbo/harness/h3/h3_queue_daemon.py
+Restart=always
+RestartSec=10
+Environment=H3_BRAIN_NONE=1
+Environment=H3_REV2=1
+Environment=H3_LANE=2
+Environment=H3_COMFY_URL=http://127.0.0.1:8190
+Environment=H3_COMFY_SVC=h3-comfyui2
+
+[Install]
+WantedBy=default.target

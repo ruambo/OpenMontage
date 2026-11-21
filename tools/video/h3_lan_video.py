@@ -79,6 +79,11 @@ class H3LanVideo(BaseTool):
             "seed": {"type": "integer"},
             "steps": {"type": "integer", "default": 8},
             "spectrum": {"type": "boolean", "default": False},
+            "lane": {
+                "type": "string",
+                "enum": ["fast"],
+                "description": "'fast' = PG500 second GPU lane (tiny text encoder, ~equal speed; doubles batch throughput). Default is the V100 lane with the 32B encoder.",
+            },
             "output_path": {"type": "string"},
             "job_timeout_seconds": {"type": "integer", "default": 2400},
         },
@@ -153,6 +158,8 @@ class H3LanVideo(BaseTool):
             payload["length"] = int(inputs["length"])  # explicit frames override seconds
         if inputs.get("seed") is not None:
             payload["seed"] = int(inputs["seed"])
+        if inputs.get("lane"):
+            payload["lane"] = str(inputs["lane"])  # "fast" -> 101 PG500 lane
 
         if str(inputs.get("operation", "t2v")) == "i2v":
             img = inputs.get("image_path")

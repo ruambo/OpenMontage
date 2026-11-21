@@ -1,0 +1,11 @@
+# [CEIL5] lane2：PG500 专属 ComfyUI(:8190) 看护单元
+[Unit]
+Description=OM101 lane2 PG500 ComfyUI resident supervisor
+
+[Service]
+ExecStart=/bin/bash /home/ruanlinbo/harness/h3/comfy_pg_resident.sh
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
