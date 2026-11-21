@@ -35,11 +35,52 @@ TEMPLATE_ZIMAGE = f"{H3}/payload_zimage_t2i_v1.json"  # Z-Image-Turbo 文生图�
 RESULTS_IMG = f"{H3}/images_done"
 
 LLM_SLOTS = "http://127.0.0.1:11435/slots"
-COMFY = "http://127.0.0.1:8188"
+COMFY = os.environ.get("H3_COMFY_URL", "http://127.0.0.1:8188")  # [CEIL5] lane2 daemon→:8190
+COMFY_SVC = os.environ.get("H3_COMFY_SVC", "h3-comfyui")  # [CEIL5] 自愈目标单元
+LANE = os.environ.get("H3_LANE", "1")  # [CEIL5] "1"=V100 主车道(默认) "2"=PG500 快道(只吃 lane==fast)
+# OM101 rev2 (2026-11-20)：视频是常态 —— ComfyUI 由 h3-comfyui.service 常驻看护，
+# 对话脑在 141 flash，27B 仅按需（.h3-llm-mode 标记存在 = LLM 备选模式在岗，任务排队等待）。
+REV2 = os.environ.get("H3_REV2", "") == "1"
+LLM_MODE_FLAG = f"{H3}/.h3-llm-mode"
+_last_repair = [0.0]
 
 POLL = 5            # 队列轮询间隔（秒）
 IDLE_SECONDS = 30   # 连续空闲多久才认为对话结束
 JOB_TIMEOUT = 1800  # 单条任务超时
+
+def _black_check(path):
+    """[CEIL7] NaN 防线（shared-memory notes/2026-09-24-H3-NaN根因 缺陷B 标注未修复：
+    DiT 内部 fp16 溢出→全黑片）。抽 3 帧 YAVG，多数≈0 判全黑。"""
+    import re
+    try:
+        d = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", path], capture_output=True, text=True)
+        dur = float((d.stdout or "0").strip() or 0)
+        bad = 0
+        for t in (0.1, max(dur / 2, 0.2), max(dur - 0.3, 0.2)):
+            r = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", path, "-frames:v", "1",
+                                "-vf", "signalstats,metadata=print", "-f", "null", "-"],
+                               capture_output=True, text=True)
+            m = re.search(r"YAVG=([\d.]+)", r.stdout + r.stderr)
+            if m and float(m.group(1)) < 2.0:
+                bad += 1
+        return bad >= 2
+    except Exception:
+        return False
+
+def _lane_match(jf):
+    """[CEIL5] 只认自己车道的任务；lane==fast 属 PG500 快道。坏文件留主道按旧行为处理。"""
+    try:
+        ln = json.load(open(jf, encoding="utf-8")).get("lane", "")
+    except Exception:
+        return LANE == "1"
+    return (ln == "fast") if LANE == "2" else (ln != "fast")
+
+def _te_of(job):
+    """[CEIL5] 快道强制小编码器：PG500 32G 装不下 32B int4(14.2G)+DiT(20G)+VAE。"""
+    if LANE == "2":
+        return "small"
+    return job.get("te") or "large"
 
 
 def log(msg):
@@ -91,6 +132,37 @@ def ui_hold_active():
     return os.path.exists(HOLD)
 
 
+def comfyui_alive():
+    """8188 在线且返回 comfyui_version（CUDA ComfyUI 特有字段）。"""
+    try:
+        info = http_get(f"{COMFY}/system_stats", timeout=3)
+    except Exception:
+        return False
+    return isinstance(info, dict) and ("devices" in info or "comfyui_version" in info)  # rev2fix: fork 只回 {system,devices}
+
+
+def wait_comfyui_ready(max_wait=2400):
+    """rev2：等常驻 ComfyUI 在岗。不在 → 5 分钟冷却地 systemctl restart h3-comfyui 自愈；
+    LLM 备选模式在岗 → 排队等人回常态（不抢卡）。"""
+    t0 = time.time()
+    while time.time() - t0 < max_wait:
+        if comfyui_alive():
+            return True
+        if os.path.exists(LLM_MODE_FLAG):
+            log("ℹ️ LLM 备选模式在岗(.h3-llm-mode)：任务排队，等待 h3_video_mode.sh on 回视频常态")
+            time.sleep(30)
+            continue
+        if time.time() - _last_repair[0] > 300:
+            _last_repair[0] = time.time()
+            log("ℹ️ ComfyUI 不在岗 → 自愈: systemctl --user restart h3-comfyui")
+            try:
+                subprocess.run(["systemctl", "--user", "restart", COMFY_SVC], timeout=30)  # [CEIL5]
+            except Exception:
+                pass
+        time.sleep(10)
+    return False
+
+
 def wait_for_llm_idle():
     need = max(1, IDLE_SECONDS // POLL)
     run = 0
@@ -131,7 +203,7 @@ def build_director_payload(job):
     with open(f"{H3}/payload_director_refine.json", encoding="utf-8") as f:
         d = json.load(f)
     p = d["prompt"]
-    if (job.get("te") or "large") == "large":
+    if _te_of(job) == "large":
         p["4"] = {"class_type": "CLIPLoader",
                   "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors",
                              "type": "minimax"}}
@@ -196,7 +268,7 @@ def build_payload(job):
     # 文本编码器二选一：
     #   large(默认) = 32B int4，占 14.3GB（2026-09-20 画质实验验证的最佳配置；对话由常驻小脑兜底）
     #   small      = 4B fp8 + ClipProj 投影，只占 4.9GB，快 ~35%，画质略降
-    if (job.get("te") or "large") == "large":
+    if _te_of(job) == "large":
         p["4"] = {"class_type": "CLIPLoader",
                   "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_int4_convrot.safetensors",
                              "type": "minimax"}}
@@ -399,6 +471,9 @@ def run_job(job):
                 shutil.copy2(f, d)
                 copied[f] = d
             dst = copied[primary]
+            if _black_check(dst):  # [CEIL7] NaN 全黑防线
+                os.rename(dst, dst.replace(".mp4", ".black-suspect-nan.mp4"))
+                raise RuntimeError("成片全黑：疑似 DiT fp16 溢出 NaN（shared-memory 2026-09-24 缺陷B），换 seed 重试或临时改 bf16")
             res.update({
                 "status": "success",
                 "video_path": dst,                      # 主产物 = 成片（非 _pre 预览）
@@ -473,7 +548,11 @@ def process_queue(jobs):
         if c["large"] >= c["small"]:
             batch_te = "large"
     log(f"本次文本编码器: {sorted(set(tes))} → 视频期大脑按 te={batch_te} 选择（对话有大脑/小脑兜底，不会断）")
-    ok = switch("on", te=batch_te)
+    if REV2:
+        log("▶ 常态视频模式：ComfyUI 常驻在岗则直渲，不让路/不回滚")
+        ok = wait_comfyui_ready()
+    else:
+        ok = switch("on", te=batch_te)
     if not ok:
         log("⚠️ 让路失败（ComfyUI 未起来），任务保留在队列里稍后重试")
         return
@@ -486,7 +565,9 @@ def process_queue(jobs):
             archive(jf, res)
             notify(res)
     finally:
-        if ui_hold_active():
+        if REV2:
+            log("常态模式：ComfyUI 保持常驻，不 off、不回滚 LLM")
+        elif ui_hold_active():
             # 人在用 ComfyUI 网页：保留实例，否则前端立刻变 Reconnecting
             log("🖥️  UI 保持模式生效 → 保留 ComfyUI，不恢复大模型")
             log(f"   用完请执行: bash {H3}/h3_ui_mode.sh off")
@@ -509,16 +590,17 @@ def process_queue(jobs):
 def main():
     os.makedirs(QUEUE, exist_ok=True)
     os.makedirs(DONE, exist_ok=True)
-    log(f"H3 队列守护进程启动（轮询 {POLL}s，空闲判定 {IDLE_SECONDS}s，超时 {JOB_TIMEOUT}s）")
+    log(f"H3 队列守护进程启动 LANE={LANE} @ {COMFY}（轮询 {POLL}s，空闲判定 {IDLE_SECONDS}s，超时 {JOB_TIMEOUT}s）")  # [CEIL5]
     if ui_hold_active():
         log("⚠️  UI 保持模式已开启（h3/.ui_hold）：任务结束后不会自动停 ComfyUI")
     while True:
         try:
-            jobs = sorted(glob.glob(f"{QUEUE}/*.json"))
+            jobs = [jf for jf in sorted(glob.glob(f"{QUEUE}/*.json")) if _lane_match(jf)]  # [CEIL5]
             if jobs:
-                wait_for_llm_idle()
+                if not REV2:
+                    wait_for_llm_idle()
                 # 等空闲期间可能有新任务进来，重新取一次
-                jobs = sorted(glob.glob(f"{QUEUE}/*.json"))
+                jobs = [jf for jf in sorted(glob.glob(f"{QUEUE}/*.json")) if _lane_match(jf)]  # [CEIL5]
                 if jobs:
                     process_queue(jobs)
         except Exception as e:  # noqa: BLE001
@@ -527,7 +609,8 @@ def main():
                 log("UI 保持模式生效 → 异常路径也不停 ComfyUI")
             else:
                 try:
-                    switch("off")  # 异常也保证 LLM 在
+                    if not REV2:
+                        switch("off")  # 异常也保证 LLM 在（rev2：常态即视频，无需回滚）
                 except Exception:
                     pass
         time.sleep(POLL)

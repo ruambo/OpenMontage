@@ -38,15 +38,8 @@ export HOME=$H3/home
 # OM101②：任何未来的 inductor/triton 编译缓存钉到持久盘（当前 --disable-triton-backend，纯保险）
 export TORCHINDUCTOR_CACHE_DIR=$H3/home/.cache/torchinductor
 export TRITON_CACHE_DIR=$H3/home/.cache/triton
-# [CEIL2] 双卡并列：cuda:0=V100(DiT+VAE)，cuda:1=PG500(32B int4 文本编码器)
-# PG500 兼容层驱动不认 CUDA_VISIBLE_DEVICES 的 UUID 写法（单个UUID也数不到卡），只能用索引；
-# 为防重启后枚举顺序漂移，这里用 nvidia-smi 动态解析索引，恒定 V100 在前。
-_cv_v=""; _cv_p=""
-while IFS=, read -r _i _n; do
-  case "$_n" in *PG500*) _cv_p=$_i;; *V100*) _cv_v=$_i;; esac
-done < <(nvidia-smi --query-gpu=index,name --format=csv,noheader)
-[ -n "$_cv_p" ] || { echo "[FATAL] PG500 枚举失败 p=$_cv_p" >&2; exit 1; }
-export CUDA_VISIBLE_DEVICES="${_cv_p}"
+# [CEIL7] lane2 钉死 PG500（真 UUID，索引重启会翻转，见 MEMORY.md）
+export CUDA_VISIBLE_DEVICES="GPU-9522238e-f1e2-6930-da67-f1aad8cb3e24"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # 编码器放 V100 上（cuda:0），消除 P2P 通信开销
 # 2026-09-24 dsh：H3 全线 NaN 根因修复（详见 shared-memory/notes/2026-09-24-H3-NaN根因-fp16动态范围.md）

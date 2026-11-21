@@ -222,6 +222,7 @@ class H(BaseHTTPRequestHandler):
                 "steps": int(body.get("steps", 8)),
                 "lora": body.get("lora") or _default_lora(),
                 "filename_prefix": job_id,
+                "lane": str(body.get("lane", "")),  # [CEIL5] "fast"=PG500 快道(强制 te=small)，缺省主道
                 "te": body.get("te", "large"),
                 "spectrum": bool(body.get("spectrum", False)),
             }

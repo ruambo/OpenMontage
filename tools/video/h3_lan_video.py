@@ -82,7 +82,7 @@ class H3LanVideo(BaseTool):
             "lane": {
                 "type": "string",
                 "enum": ["fast"],
-                "description": "'fast' = PG500 second GPU lane (tiny text encoder, ~equal speed; doubles batch throughput). Default is the V100 lane with the 32B encoder.",
+                "description": "'fast' = PG500 draft lane running the 4B text encoder. IRON RULE (101 shared-memory rule 4): 4B encoder drifts on complex prompts -- DRAFTS/THUMBNAILS ONLY, never for finals. Default lane: V100 DiT + 32B encoder on CPU.",
             },
             "output_path": {"type": "string"},
             "job_timeout_seconds": {"type": "integer", "default": 2400},
