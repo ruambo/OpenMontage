@@ -116,3 +116,8 @@ pytest-of-*/
 
 # GFPGAN/facexlib download face-detection weights to ./gfpgan/weights at runtime
 gfpgan/
+
+# OM101: 成片媒体不入库（用 bundle+tar 备份）
+projects/**/*.mp4
+projects/**/*.jpg
+projects/**/qc/
